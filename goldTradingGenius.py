@@ -8,6 +8,7 @@ import re
 import os
 import MetaTrader5 as mt5
 import math
+import platform
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,11 +22,97 @@ my_user_id = int(config.get('Telegram', 'my_user_id'))
 token = config.get('TradingBot', 'token')
 lot_size = float(config.get('Settings', 'lot_size'))
 
+mt5_login = config.getint('MetaTrader', 'login', fallback=None)
+mt5_password = config.get('MetaTrader', 'password', fallback=None)
+mt5_server = config.get('MetaTrader', 'server', fallback=None)
+mt5_terminal_path = config.get('MetaTrader', 'terminal_path', fallback=None)
+
+
+def _safe_notify(context: CallbackContext, message: str) -> None:
+    try:
+        context.bot.send_message(my_user_id, message)
+    except telegram.error.Unauthorized:
+        logging.warning(
+            "Bot can't DM user_id=%s. Open the bot chat and press Start (send /start), "
+            "or verify Telegram.my_user_id in config.ini.",
+            my_user_id,
+        )
+    except Exception:
+        logging.exception("Failed sending Telegram notification to user_id=%s", my_user_id)
+
+
+def _find_mt5_terminal_path() -> str | None:
+    """Best-effort lookup of terminal64.exe on Windows.
+
+    MetaTrader5 Python package requires a local MetaTrader 5 *x64 terminal*.
+    """
+    if mt5_terminal_path and os.path.exists(mt5_terminal_path):
+        return mt5_terminal_path
+
+    if os.name != 'nt':
+        return None
+
+    candidates = []
+    program_files = os.environ.get('ProgramFiles')
+    program_files_x86 = os.environ.get('ProgramFiles(x86)')
+
+    for base in [program_files, program_files_x86]:
+        if not base:
+            continue
+        candidates.extend([
+            os.path.join(base, 'MetaTrader 5', 'terminal64.exe'),
+            os.path.join(base, 'MetaTrader 5', 'terminal.exe'),
+        ])
+
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+
+    return None
+
+
+def _print_mt5_not_found_help(err):
+    logging.error("MetaTrader5 initialize() failed: %s", err)
+    print("\nMetaTrader 5 terminal not found (IPC initialize failed).")
+    print("Fix checklist:")
+    print("  1) Install MetaTrader 5 x64 terminal on this machine.")
+    print("  2) Launch MT5 once and log in to your trading account.")
+    print("  3) Ensure you're running 64-bit Python (MetaTrader5 package is x64-only).")
+    print("     Quick check: py -c \"import platform; print(platform.architecture())\"")
+    print("  4) (Optional) Set [MetaTrader] terminal_path in config.ini to terminal64.exe")
+    print("     Example: terminal_path = C:/Program Files/MetaTrader 5/terminal64.exe\n")
+
 def initialize_bot():
-    if not mt5.initialize():
-        print("initialize() failed, error code =", mt5.last_error())
-        quit()
-    print(mt5.account_info())
+    if os.name == 'nt' and platform.architecture()[0] != '64bit':
+        raise SystemExit(
+            "This bot requires 64-bit Python on Windows (MetaTrader5 x64). "
+            "Install 64-bit Python and re-install requirements."
+        )
+
+    terminal_path = _find_mt5_terminal_path()
+
+    # mt5.initialize requires a local terminal; login/password/server are optional but recommended.
+    init_kwargs = {}
+    if terminal_path:
+        init_kwargs['path'] = terminal_path
+    if mt5_login is not None and mt5_password and mt5_server:
+        init_kwargs.update({'login': mt5_login, 'password': mt5_password, 'server': mt5_server})
+
+    if not mt5.initialize(**init_kwargs):
+        err = mt5.last_error()
+        # (-10003, 'IPC initialize failed, MetaTrader 5 x64 not found')
+        if isinstance(err, tuple) and len(err) >= 1 and err[0] == -10003:
+            _print_mt5_not_found_help(err)
+        else:
+            logging.error("initialize() failed, error code = %s", err)
+            if terminal_path:
+                print(f"Tried terminal path: {terminal_path}")
+            else:
+                print("No MT5 terminal path detected. Set [MetaTrader] terminal_path in config.ini")
+        raise SystemExit(1)
+
+    info = mt5.account_info()
+    print(info)
 
 def handle_message(update: Update, context: CallbackContext) -> None:
     text = None
@@ -38,12 +125,12 @@ def handle_message(update: Update, context: CallbackContext) -> None:
 
     if re.search(r'\s?([A-Z]{6})\s', text):
         print(f"Received matching message: {text}")
-        context.bot.send_message(my_user_id, f"Received a new matching message: \n\n{text}")
+        _safe_notify(context, f"Received a new matching message: \n\n{text}")
         info = extract_order_info(text)
 
         if re.search(r'close half lots', text, re.IGNORECASE):
             print(f"Received close half lots message: {text}")
-            context.bot.send_message(my_user_id, f"Received a close half lots message: \n\n{text}")
+            _safe_notify(context, f"Received a close half lots message: \n\n{text}")
             
             # Extract the new SL value
             sl_match = re.search(r'MOVE SL to ([\d.]+)', text)
@@ -52,7 +139,7 @@ def handle_message(update: Update, context: CallbackContext) -> None:
                 symbol = extract_symbol(text)
                 if symbol:
                     close_half_and_update_sl(symbol, new_sl)
-                    context.bot.send_message(my_user_id, f"Closed half position and updated SL for {symbol} to {new_sl}")
+                    _safe_notify(context, f"Closed half position and updated SL for {symbol} to {new_sl}")
                     return
                 else:
                     print("Could not extract symbol from the message")
@@ -78,7 +165,7 @@ def handle_message(update: Update, context: CallbackContext) -> None:
             msg.append(f"TP {i}: Placed order for {float(format(float(volume_per_tp), '.2f'))} lots of {info['symbol']} at {info['order_type']} {info['order_price']} with SL {info['sl']} and TP {tp}")
             i += 1
 
-        context.bot.send_message(my_user_id, "\n".join(msg))
+        _safe_notify(context, "\n".join(msg))
  
 
 def extract_order_info(text: str) -> dict:
@@ -248,6 +335,7 @@ def run_bot():
     
             dp = updater.dispatcher
             dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+            dp.add_error_handler(lambda update, context: logging.exception("Telegram handler error", exc_info=context.error))
 
             # Start the bot
             updater.start_polling()

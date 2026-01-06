@@ -2,6 +2,8 @@ config.ini
 
 .vscode
 
+venv/
+
 default_session.session-journal
 
 myenv

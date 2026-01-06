@@ -42,6 +42,7 @@ token = YOUR_BOT_TOKEN
 login = YOUR_MT5_LOGIN
 password = YOUR_MT5_PASSWORD
 server = YOUR_MT5_SERVER
+terminal_path = C:/Program Files/MetaTrader 5/terminal64.exe
 
 [Settings]
 lot_size = DESIRED_LOT_SIZE
