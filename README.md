@@ -53,3 +53,5 @@ lot_size = DESIRED_LOT_SIZE
 
 ## Issues
 - The script can currently only handle one lot size value.
+
+This code only works on window environment.And you need to install mt5 terminal on your windiow.
