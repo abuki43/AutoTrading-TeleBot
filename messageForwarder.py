@@ -3,6 +3,8 @@ import logging
 from telethon import TelegramClient, events
 import re
 
+from ai_signal_utils import should_forward_message_async
+
 # logging.basicConfig(level=logging.DEBUG)
 
 config = configparser.ConfigParser()
@@ -35,7 +37,18 @@ async def main():
     async def handler(event):
         message_text = event.message.text
         if message_text:
-            if re.search(r'\s?([A-Z]{6})\s', message_text, re.IGNORECASE) or re.search(r'close half lots', message_text, re.IGNORECASE):
+            try:
+                should_forward, reason = await should_forward_message_async(message_text)
+            except Exception as e:
+                # Absolute fallback: preserve prior behavior if AI logic errors.
+                should_forward = bool(
+                    re.search(r'\s?([A-Z]{6})\s', message_text, re.IGNORECASE)
+                    or re.search(r'close half lots', message_text, re.IGNORECASE)
+                )
+                reason = f"fallback_exception:{type(e).__name__}"
+
+            if should_forward:
+                print(f"Forwarding message ({reason}):")
                 print(event.message)  # Print the incoming message to the console
                 try:
                     # Send the message content to the destination channel

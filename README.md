@@ -24,6 +24,15 @@ SL [SL Value]
 - Access to a Telegram channel or group that sends trading signals.
 - Create a config.ini file in the same directory as the script with the following contents:
 
+### Optional: Gemini AI filtering/parsing
+This project can use Gemini to classify/parse Telegram messages, with a strict fallback to the existing regex parsing if Gemini is unavailable.
+
+- Option A (recommended): set environment variable `GEMINI_API_KEY`.
+- Option B: put it in `config.ini` under a `[Gemini]` section (see below).
+- (Optional) choose a model via env var `GEMINI_MODEL` or `config.ini` key `model` (default: `gemini-1.5-flash`).
+
+If `GEMINI_API_KEY` is not set or Gemini fails to respond, the bot continues using the current regex-based logic.
+
 ```
 [Telegram]
 api_id = YOUR_TELEGRAM_API_ID
@@ -46,10 +55,13 @@ terminal_path = C:/Program Files/MetaTrader 5/terminal64.exe
 
 [Settings]
 lot_size = DESIRED_LOT_SIZE
+
+[Gemini]
+api_key = YOUR_GEMINI_API_KEY
+model = gemini-2.5-flash
 ```
 
 ## Architecture Diagram
 ![Tele Trading Bot](https://github.com/raracraz/AutoTrading-TeleBot/assets/88528326/c4f4afc3-f7ba-4f9c-9142-f48b1c746dee)
 
-## Issues
-- The script can currently only handle one lot size value.
+
