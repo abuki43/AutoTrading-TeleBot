@@ -64,4 +64,11 @@ model = gemini-2.5-flash
 ## Architecture Diagram
 ![Tele Trading Bot](https://github.com/raracraz/AutoTrading-TeleBot/assets/88528326/c4f4afc3-f7ba-4f9c-9142-f48b1c746dee)
 
+<<<<<<< HEAD
 
+=======
+## Issues
+- The script can currently only handle one lot size value.
+
+This code only works on window environment.And you need to install mt5 terminal on your windiow.
+>>>>>>> f087ed9076fcbd73f6a8c1054786a156143480ca
