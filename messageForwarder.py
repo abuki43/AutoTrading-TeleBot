@@ -37,12 +37,15 @@ async def main():
     async def handler(event):
         message_text = event.message.text
         if message_text:
+            print(f"Received message: {message_text}")
             try:
                 should_forward, reason = await should_forward_message_async(message_text)
+                print(f"AI decision: should_forward={should_forward}, reason={reason}")
             except Exception as e:
                 # Absolute fallback: preserve prior behavior if AI logic errors.
                 should_forward = bool(
-                    re.search(r'\s?([A-Z]{6})\s', message_text, re.IGNORECASE)
+                    re.search(r'\b([A-Z]{6})\b', message_text, re.IGNORECASE)
+                    or re.search(r'\b([A-Z]{3})\s*[/\\-]\s*([A-Z]{3})\b', message_text, re.IGNORECASE)
                     or re.search(r'close half lots', message_text, re.IGNORECASE)
                 )
                 reason = f"fallback_exception:{type(e).__name__}"

@@ -145,7 +145,8 @@ def handle_message(update: Update, context: CallbackContext) -> None:
         return
 
     # Only attempt trade parsing if message likely contains a symbol and BUY/SELL.
-    if re.search(r'\b(BUY|SELL)\b', text, re.IGNORECASE) is None:
+    # Accept common variants like BuyAbove/SellBelow.
+    if re.search(r'\b(BUY|SELL)(?:\s*(?:ABOVE|BELOW))?\b|\b(BUYABOVE|SELLBELOW)\b', text, re.IGNORECASE) is None:
         return
     if re.search(r'\b([A-Z][A-Z0-9_.]{2,15})\b', text, re.IGNORECASE) is None:
         return
@@ -159,6 +160,14 @@ def handle_message(update: Update, context: CallbackContext) -> None:
         default_lot=float(lot_size),
         allowed_symbols=allowed_symbols,
     )
+
+    # Debug: print the normalized AI response
+    try:
+        import json as _json
+        print("AI parsed intent:")
+        print(_json.dumps(ai_intent, indent=2, sort_keys=True, ensure_ascii=False))
+    except Exception:
+        print(f"AI parsed intent: {ai_intent}")
 
     # Fallback to the original regex parser if AI is unavailable/invalid.
     if not ai_intent or not ai_intent.get("signal"):

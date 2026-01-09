@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
+DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemma-3-27b-it")
 
 
 def _load_gemini_settings_from_config() -> Tuple[Optional[str], Optional[str]]:
@@ -43,11 +43,49 @@ class AiDecision:
 # - either exactly 6 letters (XAUUSD), OR
 # - contains digits/underscore/dot (USTEC_X100m, BTCUSDm, US30.cash)
 _SYMBOL_RE = re.compile(r"\b(?:[A-Z]{6}|[A-Z][A-Z0-9_.]{2,15}[0-9_.][A-Z0-9_.]*)\b", re.IGNORECASE)
-_SIDE_RE = re.compile(r"\b(BUY|SELL)\b", re.IGNORECASE)
+# Also accept common "BuyAbove/SellBelow" style tokens.
+_SIDE_RE = re.compile(r"\b(BUY|SELL)(?:ABOVE|BELOW|LIMIT|STOP|NOW)?\b", re.IGNORECASE)
+_SLASH_PAIR_RE = re.compile(r"\b([A-Z]{3})\s*[/\\-]\s*([A-Z]{3})\b", re.IGNORECASE)
+_TRADE_HINT_RE = re.compile(
+    r"\b("
+    r"BUY|SELL|ABOVE|BELOW|NOW|MARKET|ENTRY|OPEN|"
+    r"LIMIT|STOP|SL|TP|TAKE\s*PROFIT|STOP\s*LOSS"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _has_gemini_configured() -> bool:
+    cfg_api_key, _cfg_model = _load_gemini_settings_from_config()
+    api_key = os.environ.get("GEMINI_API_KEY") or cfg_api_key
+    return bool(api_key and api_key.strip())
+
+
+def _looks_like_trade_message(text: str) -> bool:
+    """Very permissive precheck to avoid calling AI for obvious chat.
+
+    This should NOT be strict (messages vary wildly). It's only a cheap filter.
+    """
+    if not text:
+        return False
+    if re.search(r"close half lots", text, re.IGNORECASE):
+        return True
+    # If we can spot a symbol candidate, it's probably trade-related.
+    if _extract_symbol_candidate(text) is not None:
+        return True
+    # Otherwise, look for any common trade hints.
+    return _TRADE_HINT_RE.search(text) is not None
 
 
 def _extract_symbol_candidate(text: str) -> Optional[str]:
-    match = _SYMBOL_RE.search(text or "")
+    raw = text or ""
+
+    # Handle formats like XAU/USD, EUR/USD, BTC/USD (slash or dash).
+    pair = _SLASH_PAIR_RE.search(raw)
+    if pair:
+        return (pair.group(1) + pair.group(2)).upper()
+
+    match = _SYMBOL_RE.search(raw)
     if not match:
         return None
     return match.group(0).upper()
@@ -389,16 +427,20 @@ def should_forward_message_sync(text: str) -> Tuple[bool, str]:
     if re.search(r"close half lots", text, re.IGNORECASE):
         return True, "keyword:close half lots"
 
-    # Cheap pre-gate: only consider messages containing a symbol candidate and side.
-    symbol = _extract_symbol_candidate(text)
-    if not symbol:
-        return False, "no_symbol"
-    if _SIDE_RE.search(text) is None:
-        return False, "no_side"
+    # Lightweight precheck: if it doesn't even resemble a trade, drop it early.
+    if not _looks_like_trade_message(text):
+        return False, "no_trade_hint"
 
+    # If Gemini isn't configured, don't forward everything; fall back to regex behavior.
+    if not _has_gemini_configured():
+        should = fallback_should_forward(text)
+        return should, "fallback_regex_no_api_key" if should else "fallback_regex_no_api_key_no_match"
+
+    # AI-first: send the whole message to Gemini.
     decision = gemini_classify_sync(text)
     if decision is None:
-        return True, "fallback_regex"
+        should = fallback_should_forward(text)
+        return should, "fallback_regex" if should else "fallback_regex_no_match"
 
     return decision.signal, f"ai:{decision.confidence:.2f}:{decision.reason}"[:200]
 
@@ -411,14 +453,16 @@ async def should_forward_message_async(text: str) -> Tuple[bool, str]:
     if re.search(r"close half lots", text, re.IGNORECASE):
         return True, "keyword:close half lots"
 
-    symbol = _extract_symbol_candidate(text)
-    if not symbol:
-        return False, "no_symbol"
-    if _SIDE_RE.search(text) is None:
-        return False, "no_side"
+    if not _looks_like_trade_message(text):
+        return False, "no_trade_hint"
+
+    if not _has_gemini_configured():
+        should = fallback_should_forward(text)
+        return should, "fallback_regex_no_api_key" if should else "fallback_regex_no_api_key_no_match"
 
     decision = await gemini_classify_async(text)
     if decision is None:
-        return True, "fallback_regex"
+        should = fallback_should_forward(text)
+        return should, "fallback_regex" if should else "fallback_regex_no_match"
 
     return decision.signal, f"ai:{decision.confidence:.2f}:{decision.reason}"[:200]
